@@ -174,6 +174,7 @@ QueryCache::Writer::Writer(std::mutex & mutex_, Cache & cache_, const Key & key_
     size_t & cache_size_in_bytes_, size_t max_cache_size_in_bytes_,
     size_t max_cache_entries_,
     size_t max_entry_size_in_bytes_, size_t max_entry_size_in_rows_,
+    bool compress_entries_,
     std::chrono::milliseconds min_query_runtime_)
     : mutex(mutex_)
     , cache(cache_)
@@ -183,6 +184,7 @@ QueryCache::Writer::Writer(std::mutex & mutex_, Cache & cache_, const Key & key_
     , max_cache_entries(max_cache_entries_)
     , max_entry_size_in_bytes(max_entry_size_in_bytes_)
     , max_entry_size_in_rows(max_entry_size_in_rows_)
+    , compress_entries(compress_entries_)
     , min_query_runtime(min_query_runtime_)
 {
     if (auto it = cache.find(key); it != cache.end() && !is_stale(it->first))
@@ -217,6 +219,25 @@ void QueryCache::Writer::finalizeWrite()
         return;
 
     std::lock_guard lock(mutex);
+
+    auto to_single_chunk = [](const std::shared_ptr<Chunks>& chunks_) -> std::shared_ptr<Chunks>
+    {
+        assert(chunks_.get());
+
+        if (chunks_->empty())
+            return std::make_shared<Chunks>();
+
+        Chunk chunk = std::move((*chunks_)[0]);
+        for (size_t i = 1; i != chunks_->size(); ++i)
+            chunk.append((*chunks_)[i]);
+
+        auto res = std::make_shared<Chunks>();
+        res->emplace_back(std::move(chunk));
+        return res;
+    };
+
+    if (compress_entries)
+        query_result.chunks = to_single_chunk(query_result.chunks);
 
     if (auto it = cache.find(key); it != cache.end() && !is_stale(it->first))
         return; /// same check as in ctor because a parallel Writer could have inserted the current key in the meantime
@@ -309,7 +330,7 @@ QueryCache::Reader QueryCache::createReader(const Key & key)
 QueryCache::Writer QueryCache::createWriter(const Key & key, std::chrono::milliseconds min_query_runtime)
 {
     std::lock_guard lock(mutex);
-    return Writer(mutex, cache, key, cache_size_in_bytes, max_cache_size_in_bytes, max_cache_entries, max_cache_entry_size_in_bytes, max_cache_entry_size_in_rows, min_query_runtime);
+    return Writer(mutex, cache, key, cache_size_in_bytes, max_cache_size_in_bytes, max_cache_entries, max_cache_entry_size_in_bytes, max_cache_entry_size_in_rows, compress_entries, min_query_runtime);
 }
 
 void QueryCache::reset()
@@ -338,6 +359,7 @@ void QueryCache::updateConfiguration(const Poco::Util::AbstractConfiguration & c
     max_cache_entries = config.getUInt64("query_cache.max_entries", 1024);
     max_cache_entry_size_in_bytes = config.getUInt64("query_cache.max_entry_size", 1_MiB);
     max_cache_entry_size_in_rows = config.getUInt64("query_cache.max_entry_rows", 30'000'000);
+    compress_entries = config.getBool("query_cache.compress_entries", true);
 }
 
 }

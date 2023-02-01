@@ -1280,6 +1280,7 @@ The following settings are available:
 -   `max_entries`: The maximum number of `SELECT` query results stored in the cache. Default value: `1024`.
 -   `max_entry_size`: The maximum size in bytes `SELECT` query results may have to be saved in the cache. Default value: `1048576` (1 MiB).
 -   `max_entry_rows`: The maximum number of rows `SELECT` query results may have to be saved in the cache. Default value: `30000000` (30 mil).
+-   `compress_entries`: If cache entries are compressed. Reduces the cache memory consumption but reduces cache insert/read performance. Default value: `true`.
 
 Changed settings take effect immediately.
 

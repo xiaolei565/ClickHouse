@@ -107,6 +107,7 @@ public:
         const size_t max_entry_size_in_bytes;
         size_t new_entry_size_in_rows = 0;
         const size_t max_entry_size_in_rows;
+        const bool compress_entries;
         const std::chrono::time_point<std::chrono::system_clock> query_start_time = std::chrono::system_clock::now(); /// Writer construction and finalizeWrite() coincide with query start/end
         const std::chrono::milliseconds min_query_runtime;
         QueryResult query_result;
@@ -116,6 +117,7 @@ public:
             size_t & cache_size_in_bytes_, size_t max_cache_size_in_bytes_,
             size_t max_cache_entries_,
             size_t max_entry_size_in_bytes_, size_t max_entry_size_in_rows_,
+            bool compress_entries,
             std::chrono::milliseconds min_query_runtime_);
 
         friend class QueryCache; /// for createWriter()
@@ -160,6 +162,7 @@ private:
     size_t max_cache_entries TSA_GUARDED_BY(mutex) = 0;
     size_t max_cache_entry_size_in_bytes TSA_GUARDED_BY(mutex) = 0;
     size_t max_cache_entry_size_in_rows TSA_GUARDED_BY(mutex) = 0;
+    bool compress_entries TSA_GUARDED_BY(mutex);
 
     size_t cache_size_in_bytes TSA_GUARDED_BY(mutex) = 0; /// Updated in each cache insert/delete
 

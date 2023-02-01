@@ -1472,6 +1472,7 @@
     <!--     <max_entries>1024</max_entries> -->
     <!--     <max_entry_size>1048576</max_entry_size> -->
     <!--     <max_entry_rows>30000000</max_entry_rows> -->
+    <!--     <compress_entries>true</compress_entries> -->
     <!-- </query_cache> -->
 
     <!-- Uncomment if enable merge tree metadata cache -->
