@@ -946,6 +946,90 @@ ActionsDAGPtr ActionsDAG::clone() const
     return actions;
 }
 
+ActionsDAGPtr ActionsDAG::cloneNode(const ActionsDAG::Node * node)
+{
+    auto actions = std::make_shared<ActionsDAG>();
+    actions->project_input = false;
+    actions->projected_output = false;
+
+    std::unordered_map<const ActionsDAG::Node *, ActionsDAG::Node *> copy_map;
+
+    {
+        auto & copy_node = actions->nodes.emplace_back(*node);
+        copy_map[node] = &copy_node;
+    }
+
+    for (const auto & child : node->children)
+    {
+        auto & copy_node = actions->nodes.emplace_back(*child);
+        copy_map[child] = &copy_node;
+    }
+
+    for (auto & copy_node : actions->nodes)
+        for (auto & child : copy_node.children)
+            child = copy_map[child];
+
+    for (const auto & [_, child] : copy_map)
+    {
+        if (child->type == ActionType::INPUT)
+            actions->inputs.push_back(child);
+    }
+
+    actions->outputs.push_back(copy_map[node]);
+
+    return actions;
+}
+
+static ActionsDAGPtr cloneFromNodes(const std::vector<const ActionsDAG::Node *> & nodes)
+{
+    auto actions = std::make_shared<ActionsDAG>();
+    actions->project_input = false;
+    actions->projected_output = false;
+
+    std::unordered_map<const ActionsDAG::Node *, ActionsDAG::Node *> copy_map;
+
+    for (const auto node : nodes)
+    {
+        auto & copy_node = actions->nodes.emplace_back(*node);
+        copy_map[node] = &copy_node;
+    }
+
+    for (auto & copy_node : actions->nodes)
+        for (auto & child : copy_node.children)
+            child = copy_map[child];
+
+    for (const auto node : nodes)
+        actions->outputs.push_back(copy_map[node]);
+
+    return actions;
+}
+
+ActionsDAGPtr ActionsDAG::cloneEmpty() const
+{
+    auto actions = std::make_shared<ActionsDAG>();
+    actions->project_input = project_input;
+    actions->projected_output = projected_output;
+    return actions;
+}
+
+void ActionsDAG::removeUnusedActions()
+{
+    std::unordered_set<const Node *> used_nodes;
+    for (const auto * output_node : outputs)
+        used_nodes.insert(output_node);
+
+    for (auto it = nodes.begin(); it != nodes.end();)
+    {
+        const auto & node = *it;
+        if (!used_nodes.count(&node))
+            it = nodes.erase(it);
+        else
+            ++it;
+    }
+
+}
+
+
 #if USE_EMBEDDED_COMPILER
 void ActionsDAG::compileExpressions(size_t min_count_to_compile_expression, const std::unordered_set<const ActionsDAG::Node *> & lazy_executed_nodes)
 {

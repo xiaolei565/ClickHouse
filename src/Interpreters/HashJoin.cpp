@@ -2084,6 +2084,15 @@ BlocksList HashJoin::releaseJoinedBlocks(bool restructure)
     return restored_blocks;
 }
 
+void HashJoin::addMixedFilterCondition(ExpressionActionsPtr additional_filter_expression_actions_)
+{
+    if (additional_filter_expression_actions)
+        throw Exception(ErrorCodes::LOGICAL_ERROR,
+            "HashJoin::addMixedFilterCondition called twice");
+
+    additional_filter_expression_actions = std::move(additional_filter_expression_actions_);
+}
+
 const ColumnWithTypeAndName & HashJoin::rightAsofKeyColumn() const
 {
     /// It should be nullable when right side is nullable

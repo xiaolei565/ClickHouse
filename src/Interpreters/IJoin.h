@@ -96,6 +96,11 @@ public:
     virtual IBlocksStreamPtr
         getNonJoinedBlocks(const Block & left_sample_block, const Block & result_sample_block, UInt64 max_block_size) const = 0;
 
+    void addMixedFilterCondition(ExpressionActionsPtr /* additional_filter_expression_actions */)
+    {
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Mixed conditions is not supported for this join");
+    }
+
 private:
     Block totals;
 };
