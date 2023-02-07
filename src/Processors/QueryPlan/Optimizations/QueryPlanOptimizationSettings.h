@@ -33,6 +33,9 @@ struct QueryPlanOptimizationSettings
     /// If removing redundant sorting is enabled, for example, ORDER BY clauses in subqueries
     bool remove_redundant_sorting = true;
 
+    /// Insert filtering step before sorting for join limited by this size
+    size_t max_rows_in_set_to_optimize_join = 0;
+
     static QueryPlanOptimizationSettings fromSettings(const Settings & from);
     static QueryPlanOptimizationSettings fromContext(ContextPtr from);
 };

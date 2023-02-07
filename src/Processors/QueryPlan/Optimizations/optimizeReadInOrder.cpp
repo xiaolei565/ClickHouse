@@ -31,6 +31,12 @@
 namespace DB::QueryPlanOptimizations
 {
 
+static Poco::Logger * getLogger()
+{
+    static Poco::Logger & logger = Poco::Logger::get("QueryPlanOptimizations");
+    return &logger;
+}
+
 using Positions = std::set<size_t>;
 using Permutation = std::vector<size_t>;
 
@@ -81,8 +87,7 @@ QueryPlan::Node * findReadingStep(QueryPlan::Node & node)
     if (typeid_cast<ExpressionStep *>(step) ||
         typeid_cast<FilterStep *>(step) ||
         typeid_cast<ArrayJoinStep *>(step) ||
-        typeid_cast<LimitStep *>(step) ||
-        typeid_cast<CreateSetAndFilterOnTheFlyStep *>(step))
+        typeid_cast<LimitStep *>(step))
     {
         return findReadingStep(*node.children.front());
     }
@@ -131,7 +136,7 @@ void appendFixedColumnsFromFilterExpression(const ActionsDAG::Node & filter_expr
 
                 if (maybe_fixed_column && num_constant_columns + 1 == node->children.size())
                 {
-                    //std::cerr << "====== Added fixed column " << maybe_fixed_column->result_name << ' ' << static_cast<const void *>(maybe_fixed_column) << std::endl;
+                    LOG_TEST(getLogger(), "Added fixed column {} {}", maybe_fixed_column->result_name, static_cast<const void *>(maybe_fixed_column));
                     fixed_columns.insert(maybe_fixed_column);
 
                     /// Support injective functions chain.
@@ -691,8 +696,10 @@ InputOrderInfoPtr buildInputOrderInfo(
     return std::make_shared<InputOrderInfo>(order_key_prefix_descr, next_sort_key, read_direction, limit);
 }
 
-/// We really need three different sort descriptions here.
-/// For example in aggregation query:
+/// Sort description for step that reqires sorting (aggregation or sorting JOIN).
+/// Note: We really do need three different sort descriptions here.
+///
+/// For example, aggregation query:
 ///
 ///   create table tab (a Int32, b Int32, c Int32, d Int32) engine = MergeTree order by (a, b, c);
 ///   select a, any(b), c, d from tab where b = 1 group by a, c, d order by c, d;
@@ -704,7 +711,7 @@ InputOrderInfoPtr buildInputOrderInfo(
 ///
 /// Sort description from input_order is not actually used. ReadFromMergeTree reads only PK prefix size.
 /// We should remove it later.
-struct AggregationInputOrder
+struct StepInputOrder
 {
     InputOrderInfoPtr input_order;
     SortDescription sort_description_for_merging;
@@ -714,7 +721,7 @@ struct AggregationInputOrder
     std::vector<Positions> permutation;
 };
 
-AggregationInputOrder buildInputOrderInfo(
+StepInputOrder buildInputOrderInfo(
     const FixedColumns & fixed_columns,
     const ActionsDAGPtr & dag,
     const Names & key_names,
@@ -807,7 +814,10 @@ AggregationInputOrder buildInputOrderInfo(
         const ActionsDAG::Node * sort_column_node = sorting_key_dag.tryFindInOutputs(sorting_key_column);
         /// This should not happen.
         if (!sort_column_node)
+        {
+            LOG_WARNING(getLogger(), "No sort_column_node for '{}'", sorting_key_column);
             break;
+        }
 
         if (!dag)
         {
@@ -823,7 +833,7 @@ AggregationInputOrder buildInputOrderInfo(
 
             current_direction = 1;
 
-            //std::cerr << "====== (no dag) Found direct match" << std::endl;
+            LOG_TEST(getLogger(), "Found direct match with (no dag)");
             ++next_sort_key;
         }
         else
@@ -836,14 +846,14 @@ AggregationInputOrder buildInputOrderInfo(
                 match = &match_it->second->second;
             }
 
-            //std::cerr << "====== Finding match for " << sort_column_node->result_name << ' ' << static_cast<const void *>(sort_column_node) << std::endl;
+            LOG_TEST(getLogger(), "Finding match for {} {}", sort_column_node->result_name, static_cast<const void *>(sort_column_node));
 
             if (match && match->node)
                 group_by_key_it = not_matched_keys.find(group_by_key_node->result_name);
 
             if (match && match->node && group_by_key_it != not_matched_keys.end())
             {
-                //std::cerr << "====== Found direct match" << std::endl;
+                LOG_TEST(getLogger(), "Found direct match");
 
                 current_direction = 1;
                 if (match->monotonicity)
@@ -856,7 +866,7 @@ AggregationInputOrder buildInputOrderInfo(
             }
             else if (fixed_key_columns.contains(sort_column_node))
             {
-                //std::cerr << "+++++++++ Found fixed key by match" << std::endl;
+                LOG_TEST(getLogger(), "Found fixed key by match");
                 ++next_sort_key;
             }
             else
@@ -881,7 +891,7 @@ AggregationInputOrder buildInputOrderInfo(
             /// Here, current_direction will be -1 cause negate() is negative montonic,
             /// Prefix sort description for reading will be (negate(y) DESC, negate(x) DESC),
             /// Sort description for GROUP BY will be (negate(y) DESC, negate(x) DESC, z).
-            //std::cerr << "---- adding " << std::string(group_by_key_it->first) << std::endl;
+            LOG_TEST(getLogger(), "Adding {} to sort_description", std::string(group_by_key_it->first));
             target_sort_description.emplace_back(SortColumnDescription(std::string(group_by_key_it->first), current_direction));
             permutation.emplace_back(group_by_key_it->second);
 
@@ -891,7 +901,7 @@ AggregationInputOrder buildInputOrderInfo(
         else
         {
             /// If column is fixed, will read it in table order as well.
-            //std::cerr << "---- adding " << sorting_key_column << std::endl;
+            LOG_TEST(getLogger(), "Adding {} to sort_description", sorting_key_column);
             order_key_prefix_descr.emplace_back(SortColumnDescription(sorting_key_column, 1));
         }
 
@@ -968,7 +978,7 @@ InputOrderInfoPtr buildInputOrderInfo(
     return order_info;
 }
 
-AggregationInputOrder buildInputOrderInfo(
+StepInputOrder buildInputOrderInfo(
     ReadFromMergeTree * reading,
     const FixedColumns & fixed_columns,
     const ActionsDAGPtr & dag,
@@ -984,7 +994,7 @@ AggregationInputOrder buildInputOrderInfo(
         sorting_key_columns);
 }
 
-AggregationInputOrder buildInputOrderInfo(
+StepInputOrder buildInputOrderInfo(
     ReadFromMerge * merge,
     const FixedColumns & fixed_columns,
     const ActionsDAGPtr & dag,
@@ -992,7 +1002,7 @@ AggregationInputOrder buildInputOrderInfo(
 {
     const auto & tables = merge->getSelectedTables();
 
-    AggregationInputOrder order_info;
+    StepInputOrder order_info;
     for (const auto & table : tables)
     {
         auto storage = std::get<StoragePtr>(table);
@@ -1065,7 +1075,7 @@ InputOrderInfoPtr buildInputOrderInfo(const SortingStep & sorting, QueryPlan::No
     return nullptr;
 }
 
-AggregationInputOrder buildInputOrderInfo(const Names & keys, QueryPlan::Node & node, QueryPlan::Node * reading_node)
+StepInputOrder buildInputOrderInfo(const Names & keys, QueryPlan::Node & node, QueryPlan::Node * reading_node)
 {
     if (!reading_node)
         return {};
@@ -1107,7 +1117,7 @@ void optimizeReadInOrder(QueryPlan::Node & node, QueryPlan::Nodes & nodes)
     if (!sorting)
         return;
 
-    //std::cerr << "---- optimizeReadInOrder found sorting" << std::endl;
+    LOG_DEBUG(getLogger(), "optimizeReadInOrder found sorting");
 
     if (sorting->getType() != SortingStep::Type::Full)
         return;
@@ -1238,7 +1248,7 @@ static bool compareOrderInfos(const InputOrderInfoPtr & lhs, const InputOrderInf
 }
 
 /// Cut order info to use only prefix of specified size
-static void truncateToPrefixSize(AggregationInputOrder & order_info, size_t prefix_size)
+static void truncateToPrefixSize(StepInputOrder & order_info, size_t prefix_size)
 {
     if (!order_info.input_order)
         return;
@@ -1270,16 +1280,27 @@ static void truncateToPrefixSize(AggregationInputOrder & order_info, size_t pref
 
 /// Choose order info that use longer prefix of sorting key and cut second one to use common prefix.
 /// Returns permutation that should be applied to keys.
-static Permutation findCommonOrderInfo(AggregationInputOrder & left_order_info, AggregationInputOrder & right_order_info)
+static Permutation findCommonOrderInfo(StepInputOrder & left_order_info, StepInputOrder & right_order_info)
 {
     if (!left_order_info.input_order && !right_order_info.input_order)
+    {
+        LOG_TRACE(getLogger(), "Cannot read anything in order for join");
         return {};
-
-    if (!left_order_info.input_order)
-        return flattenPositions(right_order_info.permutation);
+    }
 
     if (!right_order_info.input_order)
+    {
+        LOG_TRACE(getLogger(), "Can read left stream in order for join");
         return flattenPositions(left_order_info.permutation);
+    }
+
+    if (!left_order_info.input_order)
+    {
+        LOG_TRACE(getLogger(), "Can read right stream in order for join");
+        return flattenPositions(right_order_info.permutation);
+    }
+
+    LOG_TRACE(getLogger(), "Can read both streams in order for join");
 
     bool left_is_better = compareOrderInfos(left_order_info.input_order, right_order_info.input_order);
     auto & lhs = left_is_better ? left_order_info : right_order_info;
@@ -1291,35 +1312,23 @@ static Permutation findCommonOrderInfo(AggregationInputOrder & left_order_info, 
     return result_permutation;
 }
 
-void optimizeJoinInOrder(QueryPlan::Node & node, QueryPlan::Nodes &)
+static bool optimizeJoinInOrder(QueryPlan::Node & node, const std::shared_ptr<FullSortingMergeJoin> & join_ptr)
 {
-    if (node.children.size() != 2)
-        return;
-
-    if (node.children[0]->children.size() != 1 || node.children[1]->children.size() != 1)
-        return;
-
-    auto * join_step = typeid_cast<JoinStep *>(node.step.get());
-    if (!join_step)
-        return;
-
-    auto join_ptr = std::dynamic_pointer_cast<FullSortingMergeJoin>(join_step->getJoin());
-    if (!join_ptr)
-        return;
-
     const auto & key_names_left = join_ptr->getKeyNames(JoinTableSide::Left);
-    auto & left_child_node = *node.children[0]->children.front();
-    QueryPlan::Node * left_reading_node = findReadingStep(left_child_node);
-    auto left_order_info = buildInputOrderInfo(key_names_left, left_child_node, left_reading_node);
+    auto * left_child_node = node.children[0];
+    QueryPlan::Node * left_reading_node = findReadingStep(*left_child_node->children.front());
+    auto left_order_info = buildInputOrderInfo(key_names_left, *left_child_node, left_reading_node);
 
     const auto & key_names_right = join_ptr->getKeyNames(JoinTableSide::Right);
-    auto & right_child_node = *node.children[1]->children.front();
-    QueryPlan::Node * right_reading_node = findReadingStep(right_child_node);
-    auto right_order_info = buildInputOrderInfo(key_names_right, right_child_node, right_reading_node);
+    auto * right_child_node = node.children[1];
+    QueryPlan::Node * right_reading_node = findReadingStep(*right_child_node->children.front());
+    auto right_order_info = buildInputOrderInfo(key_names_right, *right_child_node, right_reading_node);
 
     auto keys_permuation = findCommonOrderInfo(left_order_info, right_order_info);
     if (keys_permuation.empty())
-        return;
+        return false;
+
+    LOG_TRACE(getLogger(), "Applying permutation [{}] for join keys", fmt::join(keys_permuation, ", "));
 
     join_ptr->permuteKeys(keys_permuation);
 
@@ -1333,6 +1342,64 @@ void optimizeJoinInOrder(QueryPlan::Node & node, QueryPlan::Nodes &)
     {
         requestInputOrderInfo(right_order_info.input_order, right_reading_node->step);
         join_ptr->setPrefixSortDesctiption(right_order_info.sort_description_for_merging, JoinTableSide::Right);
+    }
+    return true;
+}
+
+void applyOrderForJoin(QueryPlan::Node & node, QueryPlan::Nodes & nodes, const QueryPlanOptimizationSettings & optimization_settings)
+{
+    if (node.children.size() != 2 || node.children[0]->children.size() != 1 || node.children[1]->children.size() != 1)
+        return;
+
+    auto * join_step = typeid_cast<JoinStep *>(node.step.get());
+    if (!join_step)
+        return;
+
+    auto join_ptr = std::dynamic_pointer_cast<FullSortingMergeJoin>(join_step->getJoin());
+    if (!join_ptr)
+        return;
+
+    bool is_read_in_order_optimized = false;
+    if (optimization_settings.read_in_order)
+        is_read_in_order_optimized = optimizeJoinInOrder(node, join_ptr);
+
+    auto insert_pre_step = [&nodes, &node](size_t idx, auto && step)
+    {
+        auto & sort_node = nodes.emplace_back();
+        sort_node.step = std::move(step);
+        sort_node.children.push_back(node.children[idx]);
+        node.children[idx] = &sort_node;
+    };
+
+    size_t max_rows_in_filter_set = optimization_settings.max_rows_in_set_to_optimize_join;
+
+    auto join_kind = join_ptr->getTableJoin().kind();
+    bool kind_allows_filtering = isInner(join_kind) || isLeft(join_kind) || isRight(join_kind);
+    if (!is_read_in_order_optimized && max_rows_in_filter_set > 0 && kind_allows_filtering)
+    {
+        auto crosswise_connection = CreateSetAndFilterOnTheFlyStep::createCrossConnection();
+        auto add_create_set = [&](const DataStream & data_stream, const Names & key_names, JoinTableSide join_pos)
+        {
+            auto creating_set_step = std::make_unique<CreateSetAndFilterOnTheFlyStep>(
+                data_stream, key_names, max_rows_in_filter_set, crosswise_connection, join_pos);
+            creating_set_step->setStepDescription(fmt::format("Create set and filter {} joined stream", join_pos));
+
+            auto * step_raw_ptr = creating_set_step.get();
+            insert_pre_step(join_pos == JoinTableSide::Left ? 0 : 1, std::move(creating_set_step));
+            return step_raw_ptr;
+        };
+
+        auto * left_set = add_create_set(node.children[0]->step->getOutputStream(), join_ptr->getKeyNames(JoinTableSide::Left), JoinTableSide::Left);
+        auto * right_set = add_create_set(node.children[1]->step->getOutputStream(), join_ptr->getKeyNames(JoinTableSide::Right), JoinTableSide::Right);
+        if (isInnerOrLeft(join_kind))
+            right_set->setFiltering(left_set->getSet());
+        if (isInnerOrRight(join_kind))
+            left_set->setFiltering(right_set->getSet());
+    }
+
+    for (size_t i = 0; i < 2; ++i)
+    {
+        insert_pre_step(i, join_step->createSorting(JoinTableSide(i)));
     }
 }
 

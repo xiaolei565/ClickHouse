@@ -15,6 +15,7 @@ QueryPlanOptimizationSettings QueryPlanOptimizationSettings::fromSettings(const 
     settings.read_in_order = from.optimize_read_in_order && from.query_plan_read_in_order;
     settings.aggregation_in_order = from.optimize_aggregation_in_order && from.query_plan_aggregation_in_order;
     settings.remove_redundant_sorting = from.query_plan_remove_redundant_sorting;
+    settings.max_rows_in_set_to_optimize_join = from.max_rows_in_set_to_optimize_join;
     return settings;
 }
 

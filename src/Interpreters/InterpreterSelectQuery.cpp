@@ -43,7 +43,6 @@
 #include <QueryPipeline/Pipe.h>
 #include <Processors/QueryPlan/AggregatingStep.h>
 #include <Processors/QueryPlan/ArrayJoinStep.h>
-#include <Processors/QueryPlan/CreateSetAndFilterOnTheFlyStep.h>
 #include <Processors/QueryPlan/CreatingSetsStep.h>
 #include <Processors/QueryPlan/CubeStep.h>
 #include <Processors/QueryPlan/DistinctStep.h>
@@ -1497,44 +1496,6 @@ void InterpreterSelectQuery::executeImpl(QueryPlan & query_plan, std::optional<P
 
                     if (!joined_plan)
                         throw Exception(ErrorCodes::LOGICAL_ERROR, "There is no joined plan for query");
-
-                    auto crosswise_connection = CreateSetAndFilterOnTheFlyStep::createCrossConnection();
-                    auto add_create_set = [&settings, crosswise_connection](QueryPlan & plan, const Names & key_names, JoinTableSide join_pos)
-                    {
-                        auto creating_set_step = std::make_unique<CreateSetAndFilterOnTheFlyStep>(
-                            plan.getCurrentDataStream(), key_names, settings.max_rows_in_set_to_optimize_join, crosswise_connection, join_pos);
-                        creating_set_step->setStepDescription(fmt::format("Create set and filter {} joined stream", join_pos));
-
-                        auto * step_raw_ptr = creating_set_step.get();
-                        plan.addStep(std::move(creating_set_step));
-                        return step_raw_ptr;
-                    };
-
-                    if (expressions.join->pipelineType() == JoinPipelineType::YShaped)
-                    {
-                        const auto & table_join = expressions.join->getTableJoin();
-                        const auto & join_clause = table_join.getOnlyClause();
-
-                        auto join_kind = table_join.kind();
-                        bool kind_allows_filtering = isInner(join_kind) || isLeft(join_kind) || isRight(join_kind);
-                        if (settings.max_rows_in_set_to_optimize_join > 0 && kind_allows_filtering)
-                        {
-                            auto * left_set = add_create_set(query_plan, join_clause.key_names_left, JoinTableSide::Left);
-                            auto * right_set = add_create_set(*joined_plan, join_clause.key_names_right, JoinTableSide::Right);
-
-                            if (isInnerOrLeft(join_kind))
-                                right_set->setFiltering(left_set->getSet());
-
-                            if (isInnerOrRight(join_kind))
-                                left_set->setFiltering(right_set->getSet());
-                        }
-
-                        auto sorting_join = std::dynamic_pointer_cast<FullSortingMergeJoin>(expressions.join);
-                        if (!sorting_join)
-                            throw Exception(ErrorCodes::LOGICAL_ERROR, "Y-shaped join is not FullSortingMergeJoin");
-                        query_plan.addStep(std::make_unique<SortForJoinStep>(query_plan.getCurrentDataStream(), sorting_join, JoinTableSide::Left));
-                        joined_plan->addStep(std::make_unique<SortForJoinStep>(joined_plan->getCurrentDataStream(), sorting_join, JoinTableSide::Right));
-                    }
 
                     QueryPlanStepPtr join_step = std::make_unique<JoinStep>(
                         query_plan.getCurrentDataStream(),

@@ -112,8 +112,8 @@ void optimizeTreeSecondPass(const QueryPlanOptimizationSettings & optimization_s
 
         if (frame.next_child == 0)
         {
-            if (optimization_settings.read_in_order)
-                optimizeJoinInOrder(*frame.node, nodes);
+            /// insert sorting for join if needed before optimizeReadInOrder to optimize them
+            applyOrderForJoin(*frame.node, nodes, optimization_settings);
 
             if (optimization_settings.read_in_order)
                 optimizeReadInOrder(*frame.node, nodes);

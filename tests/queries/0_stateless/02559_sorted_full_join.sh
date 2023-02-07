@@ -112,14 +112,16 @@ test_query 4 '
         ORDER BY x DESC, y DESC ) AS t1
     JOIN ( SELECT a, b FROM (SELECT number AS a, number AS b FROM numbers_mt(1000))
         ORDER BY a, b DESC ) AS t2
-    ON t1.x = t2.a AND t1.y = t2.b'
+    ON t1.x = t2.a AND t1.y = t2.b
+    SETTINGS max_rows_in_set_to_optimize_join = 0'
 
 test_query 4 '
     SELECT * FROM ( SELECT x, y FROM (SELECT number AS x, number AS y FROM numbers_mt(1000))
         ORDER BY x DESC, y DESC ) AS t1
     JOIN ( SELECT a, b FROM (SELECT number AS a, number AS b FROM numbers_mt(1000))
         ORDER BY a DESC, b DESC ) AS t2
-    ON t1.x = t2.a AND t1.y = t2.b'
+    ON t1.x = t2.a AND t1.y = t2.b
+    SETTINGS max_rows_in_set_to_optimize_join = 0'
 
 $CLICKHOUSE_CLIENT -mn -q "
 DROP TABLE IF EXISTS t1;

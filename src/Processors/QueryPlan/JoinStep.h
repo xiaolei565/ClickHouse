@@ -62,21 +62,4 @@ private:
     size_t max_block_size;
 };
 
-class SortForJoinStep : public ITransformingStep
-{
-public:
-    SortForJoinStep(DataStream input_stream_, std::shared_ptr<FullSortingMergeJoin> join_ptr_, JoinTableSide join_side_);
-
-    void transformPipeline(QueryPipelineBuilder & pipeline, const BuildQueryPipelineSettings & build_settings) override;
-
-    String getName() const override { return "SortForJoin"; }
-    void updateOutputStream() override;
-
-protected:
-    std::shared_ptr<FullSortingMergeJoin> sorting_join;
-    JoinTableSide join_side;
-
-    std::unique_ptr<SortingStep> sorting_step = nullptr;
-};
-
 }

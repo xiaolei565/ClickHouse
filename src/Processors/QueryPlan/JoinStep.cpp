@@ -111,8 +111,9 @@ std::unique_ptr<SortingStep> JoinStep::createSorting(JoinTableSide join_side)
 
     SortDescription sort_description = getSortDescription(sorting_join->getKeyNames(join_side));
 
+    const auto & input_stream = input_streams[join_side == JoinTableSide::Left ? 0 : 1];
     auto sorting_step = std::make_unique<SortingStep>(
-        input_streams[0],
+        input_stream,
         sort_description,
         /* limit */ 0,
         /* settings */ sorting_join->getSortSettings(),
@@ -132,8 +133,10 @@ std::unique_ptr<SortingStep> JoinStep::createSorting(JoinTableSide join_side)
             join_side, dumpSortDescription(sort_description));
     }
 
-    sorting_step->setStepDescription(fmt::format("Sorting{} for {} side of JOIN",
-        join_side, prefix_sort_description.empty() ? "" : " (optimized to use sorted prefix) "));
+    sorting_step->setStepDescription(fmt::format(
+        "Sorting{} for {} side of JOIN",
+        prefix_sort_description.empty() ? "" : " (optimized to use sorted prefix) ",
+        join_side));
 
     return sorting_step;
 }
@@ -189,67 +192,6 @@ void FilledJoinStep::updateOutputStream()
 {
     output_stream = createOutputStream(
         input_streams.front(), JoiningTransform::transformHeader(input_streams.front().header, join), getDataStreamTraits());
-}
-
-static ITransformingStep::Traits getSortTraits()
-{
-    return ITransformingStep::Traits
-    {
-        {
-            .preserves_distinct_columns = true,
-            .returns_single_stream = true,
-            .preserves_number_of_streams = false,
-            .preserves_sorting = false,
-        },
-        {
-            .preserves_number_of_rows = true,
-        }
-    };
-}
-
-SortForJoinStep::SortForJoinStep(DataStream input_stream_, std::shared_ptr<FullSortingMergeJoin> join_ptr_, JoinTableSide join_side_)
-    : ITransformingStep(input_stream_, input_stream_.header, getSortTraits())
-    , sorting_join(join_ptr_)
-    , join_side(join_side_)
-{}
-
-void SortForJoinStep::transformPipeline(QueryPipelineBuilder & pipeline, const BuildQueryPipelineSettings & build_settings)
-{
-    if (sorting_step)
-        throw Exception(ErrorCodes::LOGICAL_ERROR, "SortForJoinStep::transformPipeline called twice");
-
-    SortDescription sort_description = getSortDescription(sorting_join->getKeyNames(join_side));
-
-    sorting_step = std::make_unique<SortingStep>(
-        input_streams[0],
-        sort_description,
-        /* limit */ 0,
-        /* settings */ sorting_join->getSortSettings(),
-        /* optimize_sorting_by_input_stream_properties */ false);
-
-    const SortDescription & prefix_sort_description = sorting_join->getPrefixSortDesctiption(join_side);
-    if (!prefix_sort_description.empty())
-    {
-        LOG_DEBUG(&Poco::Logger::get("JoinStep"), "Finish sort {} side of JOIN by [{}] with prefix [{}]",
-            join_side, dumpSortDescription(sort_description), dumpSortDescription(prefix_sort_description));
-
-        sorting_step->convertToFinishSorting(prefix_sort_description);
-    }
-    else
-    {
-        LOG_DEBUG(&Poco::Logger::get("JoinStep"), "Sort {} side of JOIN by [{}]",
-            join_side, dumpSortDescription(sort_description));
-    }
-
-    sorting_step->setStepDescription("Sorting for JOIN");
-    setStepDescription(fmt::format("Sorting for {} side of JOIN", join_side));
-
-    sorting_step->transformPipeline(pipeline, build_settings);
-}
-
-void SortForJoinStep::updateOutputStream()
-{
-    output_stream = createOutputStream(input_streams.front(), input_streams.front().header, getDataStreamTraits());
 }
 
 }
