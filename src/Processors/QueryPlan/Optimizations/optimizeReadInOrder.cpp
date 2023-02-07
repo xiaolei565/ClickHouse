@@ -696,7 +696,7 @@ InputOrderInfoPtr buildInputOrderInfo(
     return std::make_shared<InputOrderInfo>(order_key_prefix_descr, next_sort_key, read_direction, limit);
 }
 
-/// Sort description for step that reqires sorting (aggregation or sorting JOIN).
+/// Sort description for step that requires sorting (aggregation or sorting JOIN).
 /// Note: We really do need three different sort descriptions here.
 ///
 /// For example, aggregation query:
