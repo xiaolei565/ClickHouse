@@ -103,6 +103,41 @@ FullSortingMergeJoin * JoinStep::getSortingJoin()
     return dynamic_cast<FullSortingMergeJoin *>(join.get());
 }
 
+std::unique_ptr<SortingStep> JoinStep::createSorting(JoinTableSide join_side)
+{
+    const auto * sorting_join = getSortingJoin();
+    if (!sorting_join)
+        return nullptr;
+
+    SortDescription sort_description = getSortDescription(sorting_join->getKeyNames(join_side));
+
+    auto sorting_step = std::make_unique<SortingStep>(
+        input_streams[0],
+        sort_description,
+        /* limit */ 0,
+        /* settings */ sorting_join->getSortSettings(),
+        /* optimize_sorting_by_input_stream_properties */ false);
+
+    const SortDescription & prefix_sort_description = sorting_join->getPrefixSortDesctiption(join_side);
+    if (!prefix_sort_description.empty())
+    {
+        LOG_DEBUG(&Poco::Logger::get("JoinStep"), "Finish sort {} side of JOIN by [{}] with prefix [{}]",
+            join_side, dumpSortDescription(sort_description), dumpSortDescription(prefix_sort_description));
+
+        sorting_step->convertToFinishSorting(prefix_sort_description);
+    }
+    else
+    {
+        LOG_DEBUG(&Poco::Logger::get("JoinStep"), "Sort {} side of JOIN by [{}]",
+            join_side, dumpSortDescription(sort_description));
+    }
+
+    sorting_step->setStepDescription(fmt::format("Sorting{} for {} side of JOIN",
+        join_side, prefix_sort_description.empty() ? "" : " (optimized to use sorted prefix) "));
+
+    return sorting_step;
+}
+
 static ITransformingStep::Traits getStorageJoinTraits()
 {
     return ITransformingStep::Traits

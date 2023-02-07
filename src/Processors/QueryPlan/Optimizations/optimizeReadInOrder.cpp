@@ -729,10 +729,14 @@ AggregationInputOrder buildInputOrderInfo(
     using ReverseMatches = std::unordered_map<const ActionsDAG::Node *, MatchedTrees::Matches::const_iterator>;
     ReverseMatches reverse_matches;
 
+    /// Map from key_name to its positions in key_names.
+    std::unordered_map<std::string_view, Positions> not_matched_keys;
+    for (size_t i = 0; i < key_names.size(); ++i)
+        not_matched_keys[key_names[i]].insert(i);
+
     if (dag)
     {
         matches = matchTrees(sorting_key_dag, *dag);
-
         for (const auto & [node, match] : matches)
         {
             if (!match.monotonicity || match.monotonicity->strict)
@@ -756,10 +760,15 @@ AggregationInputOrder buildInputOrderInfo(
                     /// Direct match > strict monotonic > monotonic.
                     const MatchedTrees::Match * prev_match = &jt->second->second;
                     bool is_better = prev_match->monotonicity && !match->monotonicity;
+
+                    String prev_name = jt->second->first->result_name;
+                    String new_name = it->first->result_name;
                     if (!is_better)
                     {
                         bool both_monotionic = prev_match->monotonicity && match->monotonicity;
                         is_better = both_monotionic && match->monotonicity->strict && !prev_match->monotonicity->strict;
+                        bool new_name_matches = !not_matched_keys.contains(prev_name) && not_matched_keys.contains(new_name);
+                        is_better = is_better || new_name_matches;
                     }
 
                     if (is_better)
@@ -770,11 +779,6 @@ AggregationInputOrder buildInputOrderInfo(
     }
 
     size_t next_sort_key = 0;
-
-    /// Map from key_name to its positions in key_names.
-    std::unordered_map<std::string_view, Positions> not_matched_keys;
-    for (size_t i = 0; i < key_names.size(); ++i)
-        not_matched_keys[key_names[i]].insert(i);
 
     /// Maps elements from target_sort_description (with corresponding indices) to original positions in key_names.
     std::vector<Positions> permutation;
@@ -1230,7 +1234,7 @@ static bool compareOrderInfos(const InputOrderInfoPtr & lhs, const InputOrderInf
 {
     size_t lhs_size = lhs ? lhs->used_prefix_of_sorting_key_size : 0;
     size_t rhs_size = rhs ? rhs->used_prefix_of_sorting_key_size : 0;
-    return lhs_size < rhs_size;
+    return lhs_size >= rhs_size;
 }
 
 /// Cut order info to use only prefix of specified size
